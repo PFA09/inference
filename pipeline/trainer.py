@@ -61,12 +61,13 @@ class _Wav2Vec2CTCWrapper(torch.nn.Module):
         labels: Optional[torch.Tensor] = None,
         **kwargs,
     ):
-        # On accède au modèle de base via peft_model.base_model.model
-        base = getattr(
-            getattr(self.peft_model, "base_model", None), "model", None
-        )
-        target = base if base is not None else self.peft_model
-        return target(
+        # On appelle base_model.model (Wav2Vec2ForCTC avec couches LoRA déjà
+        # injectées) en contournant le forward() de PeftModelForFeatureExtraction
+        # qui ajoute input_ids=None — argument inconnu de Wav2Vec2ForCTC.
+        # Les gradients circulent bien via les couches LoRA car elles sont
+        # physiquement dans le graphe de base_model.model.
+        model = self.peft_model.base_model.model
+        return model(
             input_values=input_values,
             attention_mask=attention_mask,
             labels=labels,
@@ -153,7 +154,7 @@ class FineTuner:
             save_strategy="steps",
             save_steps=t.save_steps,
             fp16=torch.cuda.is_available(),
-            gradient_checkpointing=True,
+            gradient_checkpointing=False,  # désactivé : incompatible avec SpecAugment in-place + hook LoRA sur Wav2Vec2
             save_total_limit=t.save_total_limit,
             load_best_model_at_end=True,
             metric_for_best_model=t.metric_for_best_model,
